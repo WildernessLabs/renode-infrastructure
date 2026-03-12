@@ -1183,7 +1183,10 @@ namespace Antmicro.Renode.Peripherals.Timers
             AlarmBSubSecondRegister = 0x48,
             OptionRegister = 0x4c,
             BackupStart = 0x50,
-            BackupEnd = 0x9c
+            // STM32F4 has 20 backup registers (BKP0R-BKP19R, 0x50-0x9C)
+            // STM32F7 has 32 backup registers (BKP0R-BKP31R, 0x50-0xCC)
+            // Use the larger range to support both families.
+            BackupEnd = 0xCC
         }
     }
 }

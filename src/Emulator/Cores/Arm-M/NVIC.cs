@@ -1542,8 +1542,14 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 }
                 else if(cpu.PRIMASK != 0 && cpu.FAULTMASK == 0)
                 {
-                    // If only PRIMASK is set, HardFault always goes through
-                    return excp == (int)SystemException.HardFault;
+                    // If only PRIMASK is set, HardFault always goes through.
+                    // SVCall (SVC) is a synchronous exception triggered by the SVC instruction.
+                    // Per ARMv7-M ARM B1.5.14, if SVC cannot be taken at its configured priority,
+                    // it escalates to HardFault. Renode previously just masked it, which caused
+                    // NuttX context switches to silently fail. Letting it through here matches
+                    // the behavior of clearing PRIMASK before SVC (the previous workaround).
+                    return excp == (int)SystemException.HardFault
+                        || excp == (int)SystemException.SuperVisorCall;
                 }
                 // Otherwise, if FAULTMASK is set, deny everything
             }
