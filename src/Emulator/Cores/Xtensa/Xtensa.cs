@@ -36,8 +36,16 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void OnGPIO(int number, bool value)
         {
+            // Xtensa interrupt handling is done entirely through INTSET/INTENABLE/check_interrupts.
+            // TlibSetIrqPendingBit sets/clears the INTSET bit and calls check_interrupts()
+            // which evaluates pending interrupts against INTENABLE and PS.INTLEVEL, then
+            // sets/clears CPU_INTERRUPT_HARD accordingly.
+            //
+            // Do NOT call base.OnGPIO — it uses TlibSetIrq/cpu_interrupt which independently
+            // manages CPU_INTERRUPT_HARD and conflicts with check_interrupts. Specifically,
+            // base.OnGPIO(n, false) clears CPU_INTERRUPT_HARD even when INTSET still has
+            // pending interrupts (e.g., timer interrupts that latch and don't clear on deassert).
             TlibSetIrqPendingBit((uint)number, value ? 1u : 0u);
-            base.OnGPIO(number, value);
         }
 
         public void Register(SemihostingUart peripheral, NullRegistrationPoint registrationPoint)
