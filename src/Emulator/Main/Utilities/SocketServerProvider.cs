@@ -97,7 +97,7 @@ namespace Antmicro.Renode.Utilities
             DataReceived = null;
         }
 
-        public int BufferSize { get; set; } = 1;
+        public int BufferSize { get; set; } = 4096;
 
         public bool IsAnythingReceiving => DataReceived != null && DataBlockReceived != null;
 

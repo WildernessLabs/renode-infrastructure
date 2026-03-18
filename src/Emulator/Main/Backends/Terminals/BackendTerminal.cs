@@ -7,6 +7,7 @@
 //
 using System;
 using System.Collections;
+using System.Linq;
 
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Peripherals;
@@ -44,11 +45,15 @@ namespace Antmicro.Renode.Backends.Terminals
             var uartWithBuffer = uart as IUARTWithBufferState;
             if(uartWithBuffer != null)
             {
+                Antmicro.Renode.Logging.Logger.LogAs(uart, Antmicro.Renode.Logging.LogLevel.Warning,
+                    "BackendTerminal: Using BATCHED write path (IUARTWithBufferState)");
                 CharReceived += EnqueueWriteToUART;
                 uartWithBuffer.BufferStateChanged += BufferStateChanged;
             }
             else
             {
+                Antmicro.Renode.Logging.Logger.LogAs(uart, Antmicro.Renode.Logging.LogLevel.Warning,
+                    "BackendTerminal: Using PER-BYTE write path (no IUARTWithBufferState)");
                 CharReceived += WriteToUART;
             }
 
@@ -106,10 +111,38 @@ namespace Antmicro.Renode.Backends.Terminals
             lock(innerLock)
             {
                 var uartWithBuffer = uart as IUARTWithBufferState;
-                while(buffer.Count > 0 && uartWithBuffer.BufferState != BufferState.Full)
+
+                // Convert buffer to array for potential bulk write
+                var count = buffer.Count;
+                if(count > 10)
                 {
-                    uart.WriteChar((byte)buffer.Dequeue());
+                    Antmicro.Renode.Logging.Logger.LogAs(uart, Antmicro.Renode.Logging.LogLevel.Warning,
+                        "WriteBufferToUART: {0} bytes, type={1}, interfaces={2}", count, uart.GetType().FullName,
+                        string.Join(",", uart.GetType().GetInterfaces().Select(i => i.Name)));
                 }
+                if(count > 0)
+                {
+                    var data = new byte[count];
+                    for(int i = 0; i < count && uartWithBuffer.BufferState != BufferState.Full; i++)
+                    {
+                        data[i] = (byte)buffer.Dequeue();
+                    }
+                    // Use bulk WriteChars if available (avoids per-byte idle line
+                    // scheduling and IRQ updates — critical for high-throughput transfers)
+                    var bulkWriter = uart as IBulkWriteUART;
+                    if(bulkWriter != null)
+                    {
+                        bulkWriter.WriteChars(data, 0, count);
+                    }
+                    else
+                    {
+                        for(int i = 0; i < count; i++)
+                        {
+                            uart.WriteChar(data[i]);
+                        }
+                    }
+                }
+
                 pendingTimeDomainEvent = false;
             }
         }

@@ -18,7 +18,7 @@ using Antmicro.Renode.Time;
 namespace Antmicro.Renode.Peripherals.UART
 {
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord | AllowedTranslation.ByteToDoubleWord)]
-    public class STM32_UART : BasicDoubleWordPeripheral, IUART
+    public class STM32_UART : BasicDoubleWordPeripheral, IUART, IUARTWithBufferState, IBulkWriteUART
     {
         public STM32_UART(IMachine machine, uint frequency = 8000000) : base(machine)
         {
@@ -36,6 +36,40 @@ namespace Antmicro.Renode.Peripherals.UART
             receiveFifo.Enqueue(value);
             readFifoNotEmpty.Value = true;
 
+            if(!bulkWriteInProgress)
+            {
+                BufferState = BufferState.Ready;
+                FinishWrite();
+            }
+        }
+
+        // Enqueue multiple bytes efficiently, deferring per-byte overhead
+        // (idle line scheduling, IRQ update, DMA blink) to a single operation
+        // after all bytes are enqueued. Called by BackendTerminal.WriteBufferToUART
+        // via the IUARTWithBufferState batched path.
+        public void WriteChars(byte[] data, int offset, int count)
+        {
+            if(!usartEnabled.Value && !receiverEnabled.Value)
+            {
+                this.Log(LogLevel.Warning, "Received {0} characters, but the receiver is not enabled, dropping.", count);
+                return;
+            }
+            if(count > 1)
+            {
+                this.Log(LogLevel.Debug, "WriteChars: bulk write of {0} bytes", count);
+            }
+            bulkWriteInProgress = true;
+            for(int i = 0; i < count; i++)
+            {
+                WriteChar(data[offset + i]);
+            }
+            bulkWriteInProgress = false;
+            BufferState = BufferState.Ready;
+            FinishWrite();
+        }
+
+        private void FinishWrite()
+        {
             if(BaudRate == 0)
             {
                 this.Log(LogLevel.Warning, "Unknown baud rate, couldn't trigger the idle line interrupt");
@@ -63,6 +97,7 @@ namespace Antmicro.Renode.Peripherals.UART
             base.Reset();
             idleLineDetectedCancellationTokenSrc?.Cancel();
             receiveFifo.Clear();
+            bufferState = BufferState.Empty;
             IRQ.Set(false);
         }
 
@@ -109,6 +144,22 @@ namespace Antmicro.Renode.Peripherals.UART
 
         public GPIO DMARequest { get; } = new GPIO();
 
+        public BufferState BufferState
+        {
+            get => bufferState;
+            private set
+            {
+                if(bufferState == value)
+                {
+                    return;
+                }
+                bufferState = value;
+                BufferStateChanged?.Invoke(value);
+            }
+        }
+
+        public event Action<BufferState> BufferStateChanged;
+
         [field: Transient]
         public event Action<byte> CharReceived;
 
@@ -142,6 +193,10 @@ namespace Antmicro.Renode.Peripherals.UART
                             value = receiveFifo.Dequeue();
                         }
                         readFifoNotEmpty.Value = receiveFifo.Count > 0;
+                        if(receiveFifo.Count == 0)
+                        {
+                            BufferState = BufferState.Empty;
+                        }
                         Update();
                         return value;
                     }, writeCallback: (_, value) =>
@@ -259,6 +314,8 @@ namespace Antmicro.Renode.Peripherals.UART
 
         private readonly uint frequency;
 
+        private bool bulkWriteInProgress;
+        private BufferState bufferState;
         private readonly Queue<byte> receiveFifo = new Queue<byte>();
 
         private enum OversamplingMode

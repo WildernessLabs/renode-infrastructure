@@ -16,7 +16,7 @@ using Antmicro.Renode.Time;
 namespace Antmicro.Renode.Peripherals.UART
 {
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public sealed class STM32F7_USART : UARTBase, IUARTWithBufferState, IDoubleWordPeripheral, IKnownSize
+    public sealed class STM32F7_USART : UARTBase, IUARTWithBufferState, IDoubleWordPeripheral, IKnownSize, IBulkWriteUART
     {
         public STM32F7_USART(IMachine machine, uint frequency, bool lowPowerMode = false) : base(machine)
         {
@@ -111,8 +111,28 @@ namespace Antmicro.Renode.Peripherals.UART
 
         public event Action<BufferState> BufferStateChanged;
 
+        // Enqueue multiple bytes efficiently. Calls WriteChar for each byte
+        // but defers CharWritten() overhead (BufferState change, receiver timeout
+        // scheduling) to a single invocation after the entire batch.
+        public void WriteChars(byte[] data, int offset, int count)
+        {
+            bulkWriteInProgress = true;
+            for(int i = 0; i < count; i++)
+            {
+                WriteChar(data[offset + i]);
+            }
+            bulkWriteInProgress = false;
+            CharWritten();
+        }
+
+        private bool bulkWriteInProgress;
+
         protected override void CharWritten()
         {
+            if(bulkWriteInProgress)
+            {
+                return;  // Deferred to WriteChars completion
+            }
             BufferState = BufferState.Ready;
             if(receiverTimeoutOccurred != null && receiverTimeoutInterruptEnable.Value)
             {
