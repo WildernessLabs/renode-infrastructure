@@ -84,6 +84,13 @@ namespace Antmicro.Renode.Backends.Terminals
 
         public virtual event Action<byte> CharReceived;
 
+        public bool SuppressIncomingData { get; set; }
+
+        public void FlushInputBuffer()
+        {
+            lock(innerLock) { buffer.Clear(); }
+        }
+
         protected void CallCharReceived(byte value)
         {
             var charReceived = CharReceived;
@@ -95,6 +102,7 @@ namespace Antmicro.Renode.Backends.Terminals
 
         private void EnqueueWriteToUART(byte value)
         {
+            if(SuppressIncomingData) return;
             lock(innerLock)
             {
                 buffer.Enqueue(value);
@@ -110,6 +118,14 @@ namespace Antmicro.Renode.Backends.Terminals
         {
             lock(innerLock)
             {
+                // If suppressed, discard ALL buffered bytes
+                if(SuppressIncomingData)
+                {
+                    buffer.Clear();
+                    pendingTimeDomainEvent = false;
+                    return;
+                }
+
                 var uartWithBuffer = uart as IUARTWithBufferState;
 
                 // Convert buffer to array for potential bulk write
@@ -149,6 +165,7 @@ namespace Antmicro.Renode.Backends.Terminals
 
         private void WriteToUART(byte value)
         {
+            if(SuppressIncomingData) return;
             HandleExternalTimeDomainEvent(uart.WriteChar, value);
         }
 
