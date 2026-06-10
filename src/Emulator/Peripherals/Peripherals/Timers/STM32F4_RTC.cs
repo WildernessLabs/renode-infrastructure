@@ -713,7 +713,11 @@ namespace Antmicro.Renode.Peripherals.Timers
 
             public void Reset()
             {
-                timeState = new DateTime(2020, 1, 1);
+                // Start the emulated RTC at the host's current UTC time so the guest boots
+                // with a real wall-clock (like a battery-backed RTC on hardware). Without
+                // this the RTC defaulted to 2020-01-01, making TLS server certificates look
+                // "not yet valid" and breaking HTTPS in the emulator.
+                timeState = DateTime.UtcNow;
 
                 WeekDay = DayOfTheWeek.Monday;
                 pm = false;
